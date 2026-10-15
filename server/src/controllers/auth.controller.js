@@ -2,14 +2,17 @@ import User from "../models/auth.model.js";
 import bcrypt from "bcryptjs";
 import { generateVerificationToken } from "../utils/generateVerificationCode.js";
 import { generateTokenAndSetCookie } from "../utils/generateTokenAndSetCookie.js";
-import { sendVerificationEmail } from "../../mailtrap/emails.js";
+import { sendVerificationEmail, sendWelcomeEmail } from "../../mailtrap/emails.js";
 
 export const signup = async (req, res) => {
-  const { Username, Password, email } = req.body;
-
   try {
+    const { Username, Password, email } = req.body;
+
     if (!Username || !Password || !email) {
-      throw new Error("All fields are required");
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required",
+      });
     }
 
     if (Password.length < 6) {
@@ -39,10 +42,8 @@ export const signup = async (req, res) => {
       Password: hashedPassword,
       email,
       verificationToken,
-      verificationTokenExpiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      verificationTokenExpiresAt: Date.now() + 24 * 60 * 60 * 1000,
     });
-
-    // jwt
 
     generateTokenAndSetCookie(res, newUser._id);
 
@@ -58,6 +59,55 @@ export const signup = async (req, res) => {
     });
   } catch (error) {
     console.error("Signup error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+export const verifyEmail = async (req, res) => {
+  try {
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification code is required",
+      });
+    }
+
+    const newUser = await User.findOne({
+      verificationToken: code,
+      verificationTokenExpiresAt: { $gt: Date.now() },
+    });
+
+    if (!newUser) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired verification code",
+      });
+    }
+
+    newUser.isVerified = true;
+    newUser.verificationToken = undefined;
+    newUser.verificationTokenExpiresAt = undefined;
+
+    await newUser.save();
+
+    await sendWelcomeEmail(newUser.email, newUser.Username);
+
+    return res.status(200).json({
+      success: true,
+      message: "Email verified successfully",
+      user: {
+        ...newUser._doc,
+        Password: undefined,
+      },
+    });
+  } catch (error) {
+    console.error("Verify email error:", error);
 
     return res.status(500).json({
       success: false,
